@@ -2,12 +2,13 @@ import os
 import json
 import hashlib
 import logging
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 from scrapy.pipelines.files import FilesPipeline
 from scrapy.pipelines.images import ImagesPipeline
 from scrapy.http import Request
 from scrapy.exceptions import DropItem
 import yaml
+from datetime import datetime
 
 class FileDownloadPipeline(FilesPipeline):
     """Custom pipeline for downloading files with hash-based deduplication"""
@@ -208,3 +209,121 @@ class ValidationPipeline:
                 raise DropItem(f"Content type not allowed: {content_type}")
         
         return item
+
+class PageDownloadPipeline:
+    """Pipeline for downloading HTML pages with proper directory structure"""
+    
+    def __init__(self):
+        self.load_config()
+        self.setup_logging()
+        self.domain_manifests = {}
+        
+    def load_config(self):
+        """Load configuration from YAML file"""
+        try:
+            with open('config.yml', 'r') as f:
+                self.config = yaml.safe_load(f)['crawler']
+        except FileNotFoundError:
+            self.config = {
+                'storage': {
+                    'output_dir': './downloads'
+                }
+            }
+    
+    def setup_logging(self):
+        """Setup logging for the pipeline"""
+        self.logger = logging.getLogger(__name__)
+    
+    def process_item(self, item, spider):
+        """Download HTML pages and save them with proper directory structure"""
+        if not item.get('body') or not item.get('url'):
+            return item
+        
+        try:
+            # Parse URL to get domain and path
+            parsed_url = urlparse(item['url'])
+            domain = parsed_url.netloc.replace('www.', '').replace('.', 'dot')
+            path = parsed_url.path.strip('/')
+            
+            # Create domain folder name (e.g., thesceptreaidotcom)
+            domain_folder = f"{domain}dotcom" if not domain.endswith('dotcom') else domain
+            
+            # Create output directory structure
+            output_dir = self.config['storage']['output_dir']
+            domain_path = os.path.join(output_dir, domain_folder)
+            os.makedirs(domain_path, exist_ok=True)
+            
+            # Create directory hierarchy based on URL path
+            if path:
+                # Split path into components
+                path_parts = path.split('/')
+                current_path = domain_path
+                
+                # Create subdirectories for each path component
+                for part in path_parts[:-1]:  # Exclude the last part (filename)
+                    if part:
+                        current_path = os.path.join(current_path, part)
+                        os.makedirs(current_path, exist_ok=True)
+                
+                # Determine filename
+                if path_parts[-1]:
+                    filename = path_parts[-1]
+                    if not filename.endswith(('.html', '.htm')):
+                        filename += '.html'
+                else:
+                    filename = 'index.html'
+            else:
+                current_path = domain_path
+                filename = 'index.html'
+            
+            # Full file path
+            file_path = os.path.join(current_path, filename)
+            
+            # Save the HTML content
+            with open(file_path, 'wb') as f:
+                f.write(item['body'])
+            
+            # Calculate file hash
+            file_hash = hashlib.sha256(item['body']).hexdigest()
+            
+            # Get relative path for manifest
+            relative_path = os.path.relpath(file_path, output_dir)
+            
+            # Add to domain manifest
+            if domain_folder not in self.domain_manifests:
+                self.domain_manifests[domain_folder] = {}
+            
+            self.domain_manifests[domain_folder][item['url']] = {
+                'file_path': relative_path,
+                'hash': file_hash,
+                'content_type': item.get('content_type', ''),
+                'title': item.get('title', ''),
+                'depth': item.get('depth', 0),
+                'timestamp': datetime.now().isoformat(),
+                'size': len(item['body'])
+            }
+            
+            # Save domain manifest
+            self.save_domain_manifest(domain_folder, domain_path)
+            
+            self.logger.info(f"Downloaded page: {item['url']} -> {relative_path}")
+            
+        except Exception as e:
+            self.logger.error(f"Error downloading page {item['url']}: {e}")
+        
+        return item
+    
+    def save_domain_manifest(self, domain_folder, domain_path):
+        """Save manifest file for specific domain"""
+        try:
+            manifest_file = os.path.join(domain_path, 'crawl_manifest.json')
+            with open(manifest_file, 'w') as f:
+                json.dump(self.domain_manifests[domain_folder], f, indent=2)
+        except Exception as e:
+            self.logger.error(f"Error saving domain manifest for {domain_folder}: {e}")
+    
+    def close_spider(self, spider):
+        """Called when spider is closed"""
+        self.logger.info(f"Page download completed. Downloaded pages for {len(self.domain_manifests)} domains.")
+        for domain in self.domain_manifests:
+            self.logger.info(f"Domain {domain}: {len(self.domain_manifests[domain])} pages downloaded")
