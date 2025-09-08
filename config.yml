@@ -1,0 +1,56 @@
+# Web Crawler Configuration
+crawler:
+  # Base URL to start crawling from
+  base_url: "https://example.com"
+  
+  # Allowed domains (can be multiple)
+  allowed_domains:
+    - "example.com"
+    - "www.example.com"
+    - "httpbin.org"
+    - "www.httpbin.org"
+  
+  # URL patterns to exclude (regex patterns)
+  exclude_patterns:
+    - ".*/about.*"
+    - ".*/advertisements.*"
+    - ".*/ads.*"
+    - ".*/advert.*"
+    - ".*/privacy.*"
+    - ".*/terms.*"
+    - ".*/contact.*"
+    - ".*/sitemap.*"
+    - ".*/robots.txt"
+    - ".*\\.(css|js|ico|png|jpg|jpeg|gif|svg|woff|woff2|ttf|eot)$"
+    - ".*#.*"  # Exclude fragments
+    - ".*\\?.*utm_.*"  # Exclude tracking parameters
+  
+  # File types to download
+  download_file_types:
+    - "application/pdf"
+    - "image/jpeg"
+    - "image/png"
+    - "image/gif"
+    - "image/svg+xml"
+    - "text/plain"
+    - "application/msword"
+    - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  
+  # Crawling limits
+  max_depth: 3
+  max_pages_per_domain: 100
+  max_file_size_mb: 50
+  
+  # Politeness settings
+  delay_between_requests: 0.5
+  concurrent_requests: 8
+  concurrent_requests_per_domain: 4
+  
+  # User agent
+  user_agent: "RohanCrawler/1.0 (+contact@example.com)"
+  
+  # Storage settings
+  storage:
+    output_dir: "./downloads"
+    manifest_file: "./crawl_manifest.json"
+    log_file: "./crawler.log"
