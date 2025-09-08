@@ -14,6 +14,8 @@ This web crawler application is built with Scrapy and provides a comprehensive s
 - **Domain management**: Per-domain page limits and allowed domains
 - **Exception handling**: Exclude unwanted URLs with regex patterns
 - **Manifest generation**: JSON manifest of all downloaded files
+- **HTML Page Downloads**: Downloads HTML pages with proper directory structure
+- **Domain-based Organization**: Creates domain-specific folders (e.g., thesceptreaidotcom)
 
 ## Quick Start
 
@@ -33,10 +35,10 @@ Edit `config.yml` to set your target website and preferences:
 
 ```yaml
 crawler:
-  base_url: "https://example.com"
+  base_url: "https://thesceptreai.com"
   allowed_domains:
-    - "example.com"
-    - "www.example.com"
+    - "thesceptreai.com"
+    - "www.thesceptreai.com"
   exclude_patterns:
     - ".*/about.*"
     - ".*/ads.*"
@@ -52,7 +54,7 @@ crawler:
 python app.py
 
 # With custom URL
-python app.py --url "https://example.com"
+python app.py --url "https://thesceptreai.com"
 
 # With verbose logging
 python app.py --verbose
@@ -108,9 +110,9 @@ Options:
 # Create config for documentation site
 cat > doc_config.yml << 'YAML_EOF'
 crawler:
-  base_url: "https://docs.example.com"
+  base_url: "https://docs.thesceptreai.com"
   allowed_domains:
-    - "docs.example.com"
+    - "docs.thesceptreai.com"
   exclude_patterns:
     - ".*/search.*"
     - ".*/api/.*"
@@ -132,9 +134,9 @@ python app.py --config doc_config.yml --verbose
 # Create config for image gallery
 cat > gallery_config.yml << 'YAML_EOF'
 crawler:
-  base_url: "https://gallery.example.com"
+  base_url: "https://gallery.thesceptreai.com"
   allowed_domains:
-    - "gallery.example.com"
+    - "gallery.thesceptreai.com"
   exclude_patterns:
     - ".*/thumbnails/.*"
     - ".*/admin/.*"
@@ -163,16 +165,31 @@ After running the crawler, you'll find:
 
 ```
 downloads/
-├── example.com/
-│   ├── page1.html
-│   ├── image1.jpg
-│   └── document1.pdf
-└── www.example.com/
-    └── page2.html
-
-crawl_manifest.json    # Download manifest
-crawler.log           # Detailed logs
+├── thesceptreaidotcom/
+│   ├── index.html
+│   ├── about/
+│   │   └── index.html
+│   ├── products/
+│   │   ├── index.html
+│   │   └── product1.html
+│   └── crawl_manifest.json
+└── wwwthesceptreaidotcom/
+    └── index.html
 ```
+
+### Directory Naming Convention
+
+- Domain names are converted to filesystem-safe names
+- Dots (.) are replaced with "dot"
+- Example: `thesceptreai.com` becomes `thesceptreaidotcom`
+- Example: `httpbin.org` becomes `httpbindotorgdotcom`
+
+### File Organization
+
+- HTML pages are saved with proper directory hierarchy
+- URLs like `https://thesceptreai.com/products/item1` become `thesceptreaidotcom/products/item1.html`
+- Root pages become `index.html`
+- Each domain gets its own folder with a `crawl_manifest.json` file
 
 ## Manifest File
 
@@ -180,12 +197,23 @@ The `crawl_manifest.json` contains metadata about all downloaded files:
 
 ```json
 {
-  "https://example.com/image.jpg": {
-    "file_path": "example.com/image.jpg",
+  "https://thesceptreai.com": {
+    "file_path": "thesceptreaidotcom/index.html",
     "hash": "sha256_hash_here",
-    "content_type": "image/jpeg",
+    "content_type": "text/html; charset=utf-8",
+    "title": "The Sceptre AI - Home",
+    "depth": 0,
     "timestamp": "2025-01-01T12:00:00Z",
     "size": 12345
+  },
+  "https://thesceptreai.com/about": {
+    "file_path": "thesceptreaidotcom/about/index.html",
+    "hash": "sha256_hash_here",
+    "content_type": "text/html; charset=utf-8",
+    "title": "About Us",
+    "depth": 1,
+    "timestamp": "2025-01-01T12:01:00Z",
+    "size": 8765
   }
 }
 ```
