@@ -29,7 +29,8 @@ AUTOTHROTTLE_DEBUG = False
 ITEM_PIPELINES = {
     "pipelines.ValidationPipeline": 100,
     "pipelines.ContentHashPipeline": 200,
-    "pipelines.FileDownloadPipeline": 300,
+    "pipelines.PageDownloadPipeline": 300,  # Download HTML pages
+    "pipelines.FileDownloadPipeline": 400,  # Download other files
 }
 
 # File download settings
