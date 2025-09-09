@@ -24,6 +24,8 @@ crawler:
         - ".*\\.(css|js|ico|png|jpg|jpeg|gif|svg|woff|woff2|ttf|eot)$"
         - ".*#.*" # Exclude fragments
         - ".*\\?.*utm_.*" # Exclude tracking parameters
+        - ".*\\?.*fbclid.*" # Exclude Facebook tracking
+        - ".*\\?.*gclid.*" # Exclude Google tracking
 
     # File types to download
     download_file_types:
@@ -37,17 +39,25 @@ crawler:
         - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
     # Crawling limits
-    max_depth: 3
-    max_pages_per_domain: 100
+    max_depth: 5 # Increased for better SPA crawling
+    max_pages_per_domain: 200 # Increased for comprehensive crawling
     max_file_size_mb: 50
 
     # Politeness settings
-    delay_between_requests: 0.5
-    concurrent_requests: 8
-    concurrent_requests_per_domain: 4
+    delay_between_requests: 1.0 # Increased delay for SPA sites
+    concurrent_requests: 4 # Reduced for SPA sites
+    concurrent_requests_per_domain: 2 # Reduced for SPA sites
+
+    # Dynamic slowdown settings (to bypass rate limiters)
+    dynamic_slowdown:
+        enabled: true
+        min_delay: 1.0 # Minimum delay in seconds
+        max_delay: 10.0 # Maximum delay in seconds
+        progressive: true # Increase delay for subsequent requests to same domain
+        per_domain: true # Apply different delays per domain
 
     # User agent
-    user_agent: "RohanCrawler/1.0 (+contact@example.com)"
+    user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     # Storage settings
     storage:
