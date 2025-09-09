@@ -82,6 +82,14 @@ def update_scrapy_settings(config, use_playwright=False):
         settings.set('PLAYWRIGHT_BROWSER_TYPE', 'chromium')
         settings.set('PLAYWRIGHT_LAUNCH_OPTIONS', {'headless': True})
         
+    # Downloader middleware settings for dynamic slowdown and user agent rotation
+    downloader_middlewares = {
+        'middlewares.DynamicSlowdownMiddleware': 543,
+        'middlewares.RandomUserAgentMiddleware': 544,
+    }
+    
+    settings.set('DOWNLOADER_MIDDLEWARES', downloader_middlewares)
+
     # Pipeline settings - Include PageDownloadPipeline
     settings.set('ITEM_PIPELINES', {
         'pipelines.ValidationPipeline': 100,
@@ -187,6 +195,12 @@ def main():
     print(f"Output Directory: {config.get('storage', {}).get('output_dir', './downloads')}")
     print(f"Exclude Patterns: {len(config.get('exclude_patterns', []))} patterns")
     print(f"Playwright Mode: {'Enabled' if args.playwright else 'Disabled'}")
+    # Print dynamic slowdown configuration
+    dynamic_slowdown = config.get("dynamic_slowdown", {})
+    if dynamic_slowdown.get("enabled", False):
+        print(f"Dynamic Slowdown: {dynamic_slowdown.get("min_delay", 0)}-{dynamic_slowdown.get("max_delay", 5)}s")
+    else:
+        print("Dynamic Slowdown: Disabled")
     print("=" * 50)
     
     try:
