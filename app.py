@@ -8,22 +8,23 @@ import os
 import sys
 import yaml
 import logging
+from logging.handlers import RotatingFileHandler
 import argparse
 from urllib.parse import urlparse
 from scrapy.crawler import CrawlerProcess
 from scrapy.utils.project import get_project_settings
 from crawler import SiteSpider
 
-def setup_logging(config):
+def setup_logging(config, verbose=False):
     """Setup logging configuration"""
     log_file = config.get('storage', {}).get('log_file', './crawler.log')
-    log_level = logging.INFO
+    log_level = logging.DEBUG if verbose else logging.INFO
     
     # Create formatter that excludes body content
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     
-    # File handler
-    file_handler = logging.FileHandler(log_file)
+    # File handler with rotation (10MB, keep 5 backups)
+    file_handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5)
     file_handler.setFormatter(formatter)
     
     # Console handler
@@ -36,9 +37,10 @@ def setup_logging(config):
     root_logger.addHandler(file_handler)
     root_logger.addHandler(console_handler)
     
-    # Prevent scrapy from logging body content
-    logging.getLogger('scrapy.core.scraper').setLevel(logging.WARNING)
-    logging.getLogger('scrapy.downloadermiddlewares').setLevel(logging.WARNING)
+    # Keep Scrapy noisy modules at INFO even when verbose
+    logging.getLogger('scrapy').setLevel(logging.INFO)
+    logging.getLogger('scrapy.core.scraper').setLevel(logging.INFO)
+    logging.getLogger('scrapy.downloadermiddlewares').setLevel(logging.INFO)
     
     return logging.getLogger(__name__)
 
@@ -142,9 +144,9 @@ def update_scrapy_settings(config, use_playwright=False):
     
     return settings
 
-def run_crawler(config, custom_url=None, use_playwright=False):
+def run_crawler(config, custom_url=None, use_playwright=False, verbose=False):
     """Run the web crawler"""
-    logger = setup_logging(config)
+    logger = setup_logging(config, verbose=verbose)
     logger.info("Starting web crawler...")
     
     # Create output directories
@@ -153,34 +155,34 @@ def run_crawler(config, custom_url=None, use_playwright=False):
     # Update Scrapy settings
     settings = update_scrapy_settings(config, use_playwright)
     
-    # Determine allowed domains - STRICT domain checking
-    allowed_domains = []
+    # Determine allowed domains - merge config and inferred domains
+    allowed_domains = set(config.get('allowed_domains', []) or [])
     start_urls = []
     
     if custom_url:
         start_urls = [custom_url]
         # Extract domain from custom URL and add to allowed domains
         custom_domain = extract_domain_from_url(custom_url)
-        allowed_domains.append(custom_domain)
+        allowed_domains.add(custom_domain)
         # Also add www variant
         if not custom_domain.startswith('www.'):
-            allowed_domains.append(f'www.{custom_domain}')
+            allowed_domains.add(f'www.{custom_domain}')
         else:
-            allowed_domains.append(custom_domain[4:])  # Remove www.
+            allowed_domains.add(custom_domain[4:])  # Remove www.
     else:
         start_urls = [config.get('base_url')]
         if config.get('base_url'):
             base_domain = extract_domain_from_url(config.get('base_url'))
-            allowed_domains.append(base_domain)
+            allowed_domains.add(base_domain)
             # Also add www variant
             if not base_domain.startswith('www.'):
-                allowed_domains.append(f'www.{base_domain}')
+                allowed_domains.add(f'www.{base_domain}')
             else:
-                allowed_domains.append(base_domain[4:])  # Remove www.
+                allowed_domains.add(base_domain[4:])  # Remove www.
     
     # Prepare spider arguments
     spider_args = {
-        'allowed_domains': allowed_domains,
+        'allowed_domains': sorted(allowed_domains),
         'start_urls': start_urls,
         'exclude_patterns': config.get('exclude_patterns', []),
         'download_file_types': config.get('download_file_types', []),
@@ -220,9 +222,12 @@ def main():
         config['base_url'] = args.url
         print(f"Using custom URL: {args.url}")
     
-    # Set verbose logging if requested
+    # Adjust global logging level, keep Scrapy modules at INFO
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+        logging.getLogger('scrapy').setLevel(logging.INFO)
+        logging.getLogger('scrapy.core.scraper').setLevel(logging.INFO)
+        logging.getLogger('scrapy.downloadermiddlewares').setLevel(logging.INFO)
     
     # Determine allowed domains for display
     allowed_domains = []
@@ -275,7 +280,7 @@ def main():
     print("=" * 50)
     
     try:
-        run_crawler(config, args.url, args.playwright)
+        run_crawler(config, args.url, args.playwright, verbose=args.verbose)
     except KeyboardInterrupt:
         print("\nCrawler interrupted by user")
     except Exception as e:
