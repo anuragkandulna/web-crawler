@@ -42,10 +42,10 @@ class SiteSpider(scrapy.Spider):
         
         # Timeout settings
         self.timeout_settings = self.config.get('timeout_settings', {})
-        self.page_load_timeout = self.timeout_settings.get('page_load_timeout', 30)
-        self.network_idle_timeout = self.timeout_settings.get('network_idle_timeout', 10)
-        self.javascript_timeout = self.timeout_settings.get('javascript_timeout', 15)
-        self.request_timeout = self.timeout_settings.get('request_timeout', 60)
+        self.page_load_timeout = self.timeout_settings.get('page_load_timeout', 60)
+        self.network_idle_timeout = self.timeout_settings.get('network_idle_timeout', 20)
+        self.javascript_timeout = self.timeout_settings.get('javascript_timeout', 30)
+        self.request_timeout = self.timeout_settings.get('request_timeout', 120)
         
         # Track pages per domain
         self.pages_per_domain = {}
@@ -174,7 +174,6 @@ class SiteSpider(scrapy.Spider):
                         "playwright_page_methods": [
                             {"method": "wait_for_load_state", "args": ["networkidle"], "timeout": self.network_idle_timeout * 1000},
                             {"method": "wait_for_timeout", "args": [self.javascript_timeout * 1000]},
-                            {"method": "evaluate", "args": ["() => document.readyState"]},
                         ],
                         "playwright_page_goto_kwargs": {
                             "timeout": self.page_load_timeout * 1000,
@@ -207,7 +206,7 @@ class SiteSpider(scrapy.Spider):
         
         # Retry logic for failed requests
         if self.retry_attempts[url] <= self.max_retries:
-            retry_delay = self.timeout_settings.get('retry_timeout', 5)
+            retry_delay = self.timeout_settings.get('retry_timeout', 10)
             self.logger.info(f"Retrying {url} in {retry_delay} seconds... (Attempt {self.retry_attempts[url]}/{self.max_retries})")
             
             # Create new request with same parameters
@@ -221,7 +220,6 @@ class SiteSpider(scrapy.Spider):
                         "playwright_page_methods": [
                             {"method": "wait_for_load_state", "args": ["networkidle"], "timeout": self.network_idle_timeout * 1000},
                             {"method": "wait_for_timeout", "args": [self.javascript_timeout * 1000]},
-                            {"method": "evaluate", "args": ["() => document.readyState"]},
                         ],
                         "playwright_page_goto_kwargs": {
                             "timeout": self.page_load_timeout * 1000,
@@ -285,7 +283,7 @@ class SiteSpider(scrapy.Spider):
             if title:
                 item['title'] = title.strip()
         
-        # Store body for content hashing (optional)
+        # Store body for content hashing (optional) - but don't log it
         if "text/html" in ct:
             item['body'] = response.body
         
@@ -326,7 +324,6 @@ class SiteSpider(scrapy.Spider):
                                 "playwright_page_methods": [
                                     {"method": "wait_for_load_state", "args": ["networkidle"], "timeout": self.network_idle_timeout * 1000},
                                     {"method": "wait_for_timeout", "args": [self.javascript_timeout * 1000]},
-                                    {"method": "evaluate", "args": ["() => document.readyState"]},
                                 ],
                                 "playwright_page_goto_kwargs": {
                                     "timeout": self.page_load_timeout * 1000,
