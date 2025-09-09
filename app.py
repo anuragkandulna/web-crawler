@@ -9,6 +9,7 @@ import sys
 import yaml
 import logging
 import argparse
+from urllib.parse import urlparse
 from scrapy.crawler import CrawlerProcess
 from scrapy.utils.project import get_project_settings
 from crawler import SiteSpider
@@ -50,7 +51,12 @@ def create_output_directories(config):
         os.makedirs(output_dir)
         print(f"Created output directory: {output_dir}")
 
-def update_scrapy_settings(config):
+def extract_domain_from_url(url):
+    """Extract domain from URL"""
+    parsed = urlparse(url)
+    return parsed.netloc.lower()
+
+def update_scrapy_settings(config, use_playwright=False):
     """Update Scrapy settings based on configuration"""
     settings = get_project_settings()
     
@@ -66,6 +72,16 @@ def update_scrapy_settings(config):
     settings.set('FILES_STORE', output_dir)
     settings.set('IMAGES_STORE', output_dir)
     
+    # Playwright settings for SPA support
+    if use_playwright:
+        settings.set('DOWNLOAD_HANDLERS', {
+            'http': 'scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler',
+            'https': 'scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler',
+        })
+        settings.set('TWISTED_REACTOR', 'twisted.internet.asyncioreactor.AsyncioSelectorReactor')
+        settings.set('PLAYWRIGHT_BROWSER_TYPE', 'chromium')
+        settings.set('PLAYWRIGHT_LAUNCH_OPTIONS', {'headless': True})
+        
     # Pipeline settings - Include PageDownloadPipeline
     settings.set('ITEM_PIPELINES', {
         'pipelines.ValidationPipeline': 100,
@@ -76,7 +92,7 @@ def update_scrapy_settings(config):
     
     return settings
 
-def run_crawler(config, custom_url=None):
+def run_crawler(config, custom_url=None, use_playwright=False):
     """Run the web crawler"""
     logger = setup_logging(config)
     logger.info("Starting web crawler...")
@@ -85,16 +101,39 @@ def run_crawler(config, custom_url=None):
     create_output_directories(config)
     
     # Update Scrapy settings
-    settings = update_scrapy_settings(config)
+    settings = update_scrapy_settings(config, use_playwright)
+    
+    # Determine allowed domains
+    allowed_domains = config.get('allowed_domains', []).copy()
+    start_urls = []
+    
+    if custom_url:
+        start_urls = [custom_url]
+        # Extract domain from custom URL and add to allowed domains
+        custom_domain = extract_domain_from_url(custom_url)
+        if custom_domain not in allowed_domains:
+            allowed_domains.append(custom_domain)
+            # Also add www variant
+            if not custom_domain.startswith('www.'):
+                allowed_domains.append(f'www.{custom_domain}')
+            else:
+                allowed_domains.append(custom_domain[4:])  # Remove www.
+    else:
+        start_urls = [config.get('base_url')]
+        if config.get('base_url'):
+            base_domain = extract_domain_from_url(config.get('base_url'))
+            if base_domain not in allowed_domains:
+                allowed_domains.append(base_domain)
     
     # Prepare spider arguments
     spider_args = {
-        'allowed_domains': config.get('allowed_domains', []),
-        'start_urls': [custom_url] if custom_url else [config.get('base_url')],
+        'allowed_domains': allowed_domains,
+        'start_urls': start_urls,
         'exclude_patterns': config.get('exclude_patterns', []),
         'download_file_types': config.get('download_file_types', []),
         'max_pages_per_domain': config.get('max_pages_per_domain', 100),
-        'max_file_size_mb': config.get('max_file_size_mb', 50)
+        'max_file_size_mb': config.get('max_file_size_mb', 50),
+        'use_playwright': use_playwright
     }
     
     # Start crawler process
@@ -113,6 +152,8 @@ def main():
                        help='Custom URL to crawl (overrides config)')
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Enable verbose logging')
+    parser.add_argument('--playwright', '-p', action='store_true',
+                       help='Use Playwright for JavaScript-heavy sites (SPAs)')
     
     args = parser.parse_args()
     
@@ -128,20 +169,28 @@ def main():
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
     
+    # Determine allowed domains for display
+    allowed_domains = config.get('allowed_domains', []).copy()
+    if args.url:
+        custom_domain = extract_domain_from_url(args.url)
+        if custom_domain not in allowed_domains:
+            allowed_domains.append(custom_domain)
+    
     # Print configuration summary
     print("=" * 50)
     print("Web Crawler Configuration")
     print("=" * 50)
     print(f"Base URL: {config.get('base_url')}")
-    print(f"Allowed Domains: {', '.join(config.get('allowed_domains', []))}")
+    print(f"Allowed Domains: {', '.join(allowed_domains)}")
     print(f"Max Depth: {config.get('max_depth', 3)}")
     print(f"Max Pages per Domain: {config.get('max_pages_per_domain', 100)}")
     print(f"Output Directory: {config.get('storage', {}).get('output_dir', './downloads')}")
     print(f"Exclude Patterns: {len(config.get('exclude_patterns', []))} patterns")
+    print(f"Playwright Mode: {'Enabled' if args.playwright else 'Disabled'}")
     print("=" * 50)
     
     try:
-        run_crawler(config, args.url)
+        run_crawler(config, args.url, args.playwright)
     except KeyboardInterrupt:
         print("\nCrawler interrupted by user")
     except Exception as e:
