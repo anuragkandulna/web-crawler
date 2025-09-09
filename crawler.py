@@ -2,6 +2,7 @@ import scrapy
 import re
 import yaml
 import logging
+import asyncio
 from urllib.parse import urljoin, urldefrag, urlparse
 from scrapy.exceptions import DropItem
 
@@ -21,8 +22,8 @@ class SiteSpider(scrapy.Spider):
     name = "site"
     
     def __init__(self, allowed_domains=None, start_urls=None, exclude_patterns=None, 
-                 download_file_types=None, max_pages_per_domain=None, max_file_size_mb=None, 
-                 use_playwright=False, *args, **kwargs):
+                 download_file_types=None, page_download_types=None, max_pages_per_domain=None, 
+                 max_file_size_mb=None, max_retries=None, use_playwright=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
         # Load configuration
@@ -33,9 +34,18 @@ class SiteSpider(scrapy.Spider):
         self.start_urls = start_urls or [self.config.get('base_url', 'https://example.com')]
         self.exclude_patterns = exclude_patterns or self.config.get('exclude_patterns', [])
         self.download_file_types = download_file_types or self.config.get('download_file_types', [])
+        self.page_download_types = page_download_types or self.config.get('page_download_types', ['html'])
         self.max_pages_per_domain = max_pages_per_domain or self.config.get('max_pages_per_domain', 100)
         self.max_file_size_mb = max_file_size_mb or self.config.get('max_file_size_mb', 50)
+        self.max_retries = max_retries or self.config.get('max_retries', 3)
         self.use_playwright = use_playwright
+        
+        # Timeout settings
+        self.timeout_settings = self.config.get('timeout_settings', {})
+        self.page_load_timeout = self.timeout_settings.get('page_load_timeout', 30)
+        self.network_idle_timeout = self.timeout_settings.get('network_idle_timeout', 10)
+        self.javascript_timeout = self.timeout_settings.get('javascript_timeout', 15)
+        self.request_timeout = self.timeout_settings.get('request_timeout', 60)
         
         # Track pages per domain
         self.pages_per_domain = {}
@@ -43,10 +53,20 @@ class SiteSpider(scrapy.Spider):
         # Track visited URLs to avoid infinite loops
         self.visited_urls = set()
         
+        # Track crawling progress
+        self.crawled_count = 0
+        self.failed_count = 0
+        
+        # Track retry attempts per URL
+        self.retry_attempts = {}
+        
         self.logger.info(f"Spider initialized with {len(self.start_urls)} start URLs")
         self.logger.info(f"Allowed domains: {self.allowed_domains}")
         self.logger.info(f"Exclude patterns: {len(self.exclude_patterns)} patterns")
+        self.logger.info(f"Page download types: {self.page_download_types}")
+        self.logger.info(f"Max retries: {self.max_retries}")
         self.logger.info(f"Playwright mode: {self.use_playwright}")
+        self.logger.info(f"Timeout settings: {self.timeout_settings}")
     
     def load_config(self):
         """Load configuration from YAML file"""
@@ -66,13 +86,27 @@ class SiteSpider(scrapy.Spider):
         return False
     
     def is_allowed_domain(self, url):
-        """Check if URL belongs to allowed domains"""
+        """Check if URL belongs to allowed domains - STRICT domain checking"""
         parsed_url = urlparse(url)
         domain = parsed_url.netloc.lower()
         
-        for allowed_domain in self.allowed_domains:
-            if domain == allowed_domain.lower() or domain.endswith('.' + allowed_domain.lower()):
+        # Get base domain from start URLs
+        base_domains = set()
+        for start_url in self.start_urls:
+            base_parsed = urlparse(start_url)
+            base_domain = base_parsed.netloc.lower()
+            base_domains.add(base_domain)
+            # Also add www variant
+            if base_domain.startswith('www.'):
+                base_domains.add(base_domain[4:])
+            else:
+                base_domains.add(f'www.{base_domain}')
+        
+        # Check if domain matches any base domain
+        for base_domain in base_domains:
+            if domain == base_domain or domain.endswith('.' + base_domain):
                 return True
+        
         return False
     
     def check_domain_limit(self, url):
@@ -92,6 +126,41 @@ class SiteSpider(scrapy.Spider):
         domain = parsed_url.netloc.lower()
         self.pages_per_domain[domain] = self.pages_per_domain.get(domain, 0) + 1
     
+    def should_download_page_type(self, content_type, url):
+        """Check if page type should be downloaded based on configuration"""
+        if not self.page_download_types:
+            return True  # Download all if no specific types configured
+        
+        # Check content type
+        ct = content_type.lower()
+        
+        # Check file extension
+        parsed_url = urlparse(url)
+        path = parsed_url.path.lower()
+        
+        for page_type in self.page_download_types:
+            page_type = page_type.lower()
+            
+            # Check content type matches
+            if page_type == 'html' and 'text/html' in ct:
+                return True
+            elif page_type == 'pdf' and ('application/pdf' in ct or path.endswith('.pdf')):
+                return True
+            elif page_type == 'doc' and ('application/msword' in ct or path.endswith('.doc')):
+                return True
+            elif page_type == 'docx' and ('application/vnd.openxmlformats-officedocument.wordprocessingml.document' in ct or path.endswith('.docx')):
+                return True
+            elif page_type == 'txt' and ('text/plain' in ct or path.endswith('.txt')):
+                return True
+            elif page_type == 'xml' and ('application/xml' in ct or 'text/xml' in ct or path.endswith('.xml')):
+                return True
+            elif page_type == 'json' and ('application/json' in ct or path.endswith('.json')):
+                return True
+            elif page_type == 'csv' and ('text/csv' in ct or path.endswith('.csv')):
+                return True
+        
+        return False
+    
     def start_requests(self):
         """Generate initial requests with optional Playwright support"""
         for url in self.start_urls:
@@ -103,14 +172,76 @@ class SiteSpider(scrapy.Spider):
                         "playwright": True,
                         "playwright_include_page": True,
                         "playwright_page_methods": [
-                            {"method": "wait_for_load_state", "args": ["networkidle"]},
-                            {"method": "wait_for_timeout", "args": [5000]},  # Wait 5 seconds for JS
-                            {"method": "evaluate", "args": ["() => document.readyState"]},  # Check if page is fully loaded
-                        ]
-                    }
+                            {"method": "wait_for_load_state", "args": ["networkidle"], "timeout": self.network_idle_timeout * 1000},
+                            {"method": "wait_for_timeout", "args": [self.javascript_timeout * 1000]},
+                            {"method": "evaluate", "args": ["() => document.readyState"]},
+                        ],
+                        "playwright_page_goto_kwargs": {
+                            "timeout": self.page_load_timeout * 1000,
+                            "wait_until": "networkidle"
+                        },
+                        "download_timeout": self.request_timeout
+                    },
+                    errback=self.handle_error
                 )
             else:
-                yield scrapy.Request(url=url, callback=self.parse)
+                yield scrapy.Request(
+                    url=url, 
+                    callback=self.parse,
+                    meta={"download_timeout": self.request_timeout},
+                    errback=self.handle_error
+                )
+    
+    def handle_error(self, failure):
+        """Handle request errors with retry logic"""
+        url = failure.request.url
+        self.failed_count += 1
+        
+        # Track retry attempts
+        if url not in self.retry_attempts:
+            self.retry_attempts[url] = 0
+        
+        self.retry_attempts[url] += 1
+        
+        self.logger.error(f"Request failed: {url} - {failure.value} (Attempt {self.retry_attempts[url]})")
+        
+        # Retry logic for failed requests
+        if self.retry_attempts[url] <= self.max_retries:
+            retry_delay = self.timeout_settings.get('retry_timeout', 5)
+            self.logger.info(f"Retrying {url} in {retry_delay} seconds... (Attempt {self.retry_attempts[url]}/{self.max_retries})")
+            
+            # Create new request with same parameters
+            if self.use_playwright:
+                return scrapy.Request(
+                    url,
+                    callback=failure.request.callback,
+                    meta={
+                        "playwright": True,
+                        "playwright_include_page": True,
+                        "playwright_page_methods": [
+                            {"method": "wait_for_load_state", "args": ["networkidle"], "timeout": self.network_idle_timeout * 1000},
+                            {"method": "wait_for_timeout", "args": [self.javascript_timeout * 1000]},
+                            {"method": "evaluate", "args": ["() => document.readyState"]},
+                        ],
+                        "playwright_page_goto_kwargs": {
+                            "timeout": self.page_load_timeout * 1000,
+                            "wait_until": "networkidle"
+                        },
+                        "download_timeout": self.request_timeout
+                    },
+                    errback=self.handle_error,
+                    dont_filter=True
+                )
+            else:
+                return scrapy.Request(
+                    url,
+                    callback=failure.request.callback,
+                    meta={"download_timeout": self.request_timeout},
+                    errback=self.handle_error,
+                    dont_filter=True
+                )
+        else:
+            self.logger.error(f"Max retries ({self.max_retries}) exceeded for {url}")
     
     def parse(self, response):
         """Parse response and extract links and content"""
@@ -121,6 +252,7 @@ class SiteSpider(scrapy.Spider):
         
         # Add to visited URLs
         self.visited_urls.add(response.url)
+        self.crawled_count += 1
         
         # Check domain limit
         if not self.check_domain_limit(response.url):
@@ -132,6 +264,11 @@ class SiteSpider(scrapy.Spider):
         
         # Get content type
         ct = response.headers.get("Content-Type", b"").decode().lower()
+        
+        # Check if we should download this page type
+        if not self.should_download_page_type(ct, response.url):
+            self.logger.info(f"Skipping page type not in download list: {response.url} (Content-Type: {ct})")
+            return
         
         # Create item
         item = CrawlItem(
@@ -165,8 +302,9 @@ class SiteSpider(scrapy.Spider):
                     if self.should_exclude_url(u):
                         continue
                     
-                    # Check if domain is allowed
+                    # Check if domain is allowed (STRICT domain checking)
                     if not self.is_allowed_domain(u):
+                        self.logger.debug(f"Skipping external domain: {u}")
                         continue
                     
                     # Check domain limit
@@ -186,18 +324,29 @@ class SiteSpider(scrapy.Spider):
                                 "playwright": True,
                                 "playwright_include_page": True,
                                 "playwright_page_methods": [
-                                    {"method": "wait_for_load_state", "args": ["networkidle"]},
-                                    {"method": "wait_for_timeout", "args": [3000]},  # Wait 3 seconds for JS
+                                    {"method": "wait_for_load_state", "args": ["networkidle"], "timeout": self.network_idle_timeout * 1000},
+                                    {"method": "wait_for_timeout", "args": [self.javascript_timeout * 1000]},
                                     {"method": "evaluate", "args": ["() => document.readyState"]},
-                                ]
-                            }
+                                ],
+                                "playwright_page_goto_kwargs": {
+                                    "timeout": self.page_load_timeout * 1000,
+                                    "wait_until": "networkidle"
+                                },
+                                "download_timeout": self.request_timeout
+                            },
+                            errback=self.handle_error
                         )
                     else:
-                        yield response.follow(u, callback=self.parse)
+                        yield response.follow(
+                            u, 
+                            callback=self.parse,
+                            meta={"download_timeout": self.request_timeout},
+                            errback=self.handle_error
+                        )
                     
                     links_found += 1
             
-            self.logger.info(f"Found {links_found} links on {response.url}")
+            self.logger.info(f"Found {links_found} links on {response.url} (Total crawled: {self.crawled_count}, Failed: {self.failed_count})")
             
             # Extract image URLs
             image_urls = []
@@ -271,3 +420,6 @@ class SiteSpider(scrapy.Spider):
         self.logger.info(f"Spider closed: {reason}")
         self.logger.info(f"Pages crawled per domain: {self.pages_per_domain}")
         self.logger.info(f"Total unique URLs visited: {len(self.visited_urls)}")
+        self.logger.info(f"Total pages crawled: {self.crawled_count}")
+        self.logger.info(f"Total failed requests: {self.failed_count}")
+        self.logger.info(f"Retry attempts: {sum(self.retry_attempts.values())}")
