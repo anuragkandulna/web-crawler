@@ -1,12 +1,12 @@
 # Web Crawler Configuration
 crawler:
   # Base URL to start crawling from
-  base_url: "https://example.com"
+  base_url: "https://thesceptreai.com"
   
   # Allowed domains (can be multiple)
   allowed_domains:
-    - "example.com"
-    - "www.example.com"
+    - "thesceptreai.com"
+    - "www.thesceptreai.com"
     - "httpbin.org"
     - "www.httpbin.org"
   
