@@ -40,6 +40,9 @@ class SiteSpider(scrapy.Spider):
         # Track pages per domain
         self.pages_per_domain = {}
         
+        # Track visited URLs to avoid infinite loops
+        self.visited_urls = set()
+        
         self.logger.info(f"Spider initialized with {len(self.start_urls)} start URLs")
         self.logger.info(f"Allowed domains: {self.allowed_domains}")
         self.logger.info(f"Exclude patterns: {len(self.exclude_patterns)} patterns")
@@ -101,7 +104,8 @@ class SiteSpider(scrapy.Spider):
                         "playwright_include_page": True,
                         "playwright_page_methods": [
                             {"method": "wait_for_load_state", "args": ["networkidle"]},
-                            {"method": "wait_for_timeout", "args": [3000]},  # Wait 3 seconds for JS
+                            {"method": "wait_for_timeout", "args": [5000]},  # Wait 5 seconds for JS
+                            {"method": "evaluate", "args": ["() => document.readyState"]},  # Check if page is fully loaded
                         ]
                     }
                 )
@@ -110,6 +114,14 @@ class SiteSpider(scrapy.Spider):
     
     def parse(self, response):
         """Parse response and extract links and content"""
+        # Check if URL was already visited
+        if response.url in self.visited_urls:
+            self.logger.debug(f"URL already visited: {response.url}")
+            return
+        
+        # Add to visited URLs
+        self.visited_urls.add(response.url)
+        
         # Check domain limit
         if not self.check_domain_limit(response.url):
             self.logger.info(f"Domain limit reached for {urlparse(response.url).netloc}")
@@ -143,6 +155,7 @@ class SiteSpider(scrapy.Spider):
         # Process HTML content
         if "text/html" in ct:
             # Extract and follow links
+            links_found = 0
             for href in response.css("a::attr(href)").getall():
                 if href:
                     u = urljoin(response.url, href)
@@ -160,6 +173,10 @@ class SiteSpider(scrapy.Spider):
                     if not self.check_domain_limit(u):
                         continue
                     
+                    # Check if already visited
+                    if u in self.visited_urls:
+                        continue
+                    
                     # Follow the link
                     if self.use_playwright:
                         yield response.follow(
@@ -170,12 +187,17 @@ class SiteSpider(scrapy.Spider):
                                 "playwright_include_page": True,
                                 "playwright_page_methods": [
                                     {"method": "wait_for_load_state", "args": ["networkidle"]},
-                                    {"method": "wait_for_timeout", "args": [2000]},
+                                    {"method": "wait_for_timeout", "args": [3000]},  # Wait 3 seconds for JS
+                                    {"method": "evaluate", "args": ["() => document.readyState"]},
                                 ]
                             }
                         )
                     else:
                         yield response.follow(u, callback=self.parse)
+                    
+                    links_found += 1
+            
+            self.logger.info(f"Found {links_found} links on {response.url}")
             
             # Extract image URLs
             image_urls = []
@@ -248,3 +270,4 @@ class SiteSpider(scrapy.Spider):
         """Called when spider is closed"""
         self.logger.info(f"Spider closed: {reason}")
         self.logger.info(f"Pages crawled per domain: {self.pages_per_domain}")
+        self.logger.info(f"Total unique URLs visited: {len(self.visited_urls)}")
