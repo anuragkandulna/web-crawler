@@ -19,14 +19,26 @@ def setup_logging(config):
     log_file = config.get('storage', {}).get('log_file', './crawler.log')
     log_level = logging.INFO
     
-    logging.basicConfig(
-        level=log_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
+    # Create formatter that excludes body content
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
+    # File handler
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(formatter)
+    
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+    
+    # Prevent scrapy from logging body content
+    logging.getLogger('scrapy.core.scraper').setLevel(logging.WARNING)
+    logging.getLogger('scrapy.downloadermiddlewares').setLevel(logging.WARNING)
     
     return logging.getLogger(__name__)
 
@@ -62,25 +74,29 @@ def update_scrapy_settings(config, use_playwright=False):
     
     # Update settings from config
     settings.set('USER_AGENT', config.get('user_agent', 'RohanCrawler/1.0'))
-    settings.set('CONCURRENT_REQUESTS', config.get('concurrent_requests', 8))
-    settings.set('CONCURRENT_REQUESTS_PER_DOMAIN', config.get('concurrent_requests_per_domain', 4))
-    settings.set('DOWNLOAD_DELAY', config.get('delay_between_requests', 0.5))
+    settings.set('CONCURRENT_REQUESTS', config.get('concurrent_requests', 2))
+    settings.set('CONCURRENT_REQUESTS_PER_DOMAIN', config.get('concurrent_requests_per_domain', 1))
+    settings.set('DOWNLOAD_DELAY', config.get('delay_between_requests', 2.0))
     settings.set('DEPTH_LIMIT', config.get('max_depth', 3))
     
-    # Timeout settings
+    # Timeout settings - Use improved timeouts
     timeout_settings = config.get('timeout_settings', {})
-    settings.set('DOWNLOAD_TIMEOUT', timeout_settings.get('request_timeout', 60))
+    settings.set('DOWNLOAD_TIMEOUT', timeout_settings.get('request_timeout', 120))
     settings.set('DOWNLOAD_WARNSIZE', 33554432)  # 32MB
     settings.set('DOWNLOAD_MAXSIZE', 1073741824)  # 1GB
     
     # Retry settings
-    settings.set('RETRY_TIMES', config.get('max_retries', 3))
-    settings.set('RETRY_HTTP_CODES', [500, 502, 503, 504, 408, 429])
+    settings.set('RETRY_TIMES', config.get('max_retries', 5))
+    settings.set('RETRY_HTTP_CODES', [500, 502, 503, 504, 408, 429, 522, 524])
     
     # File download settings
     output_dir = config.get('storage', {}).get('output_dir', './downloads')
     settings.set('FILES_STORE', output_dir)
     settings.set('IMAGES_STORE', output_dir)
+    
+    # Disable verbose logging to prevent content logging
+    settings.set('LOG_LEVEL', 'INFO')
+    settings.set('LOG_ENABLED', True)
     
     # Playwright settings for SPA support
     if use_playwright:
@@ -92,12 +108,22 @@ def update_scrapy_settings(config, use_playwright=False):
         settings.set('PLAYWRIGHT_BROWSER_TYPE', 'chromium')
         settings.set('PLAYWRIGHT_LAUNCH_OPTIONS', {
             'headless': True,
-            'args': ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+            'args': [
+                '--no-sandbox', 
+                '--disable-dev-shm-usage', 
+                '--disable-gpu',
+                '--disable-web-security',
+                '--disable-features=VizDisplayCompositor',
+                '--disable-extensions',
+                '--disable-plugins',
+                '--disable-images',
+                '--disable-javascript'  # Disable JS for faster loading
+            ]
         })
         
         # Playwright timeout settings
-        settings.set('PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT', timeout_settings.get('page_load_timeout', 30) * 1000)
-        settings.set('PLAYWRIGHT_PAGE_METHODS_TIMEOUT', timeout_settings.get('javascript_timeout', 15) * 1000)
+        settings.set('PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT', timeout_settings.get('page_load_timeout', 60) * 1000)
+        settings.set('PLAYWRIGHT_PAGE_METHODS_TIMEOUT', timeout_settings.get('javascript_timeout', 30) * 1000)
         
     # Downloader middleware settings for dynamic slowdown and user agent rotation
     downloader_middlewares = {
@@ -162,7 +188,7 @@ def run_crawler(config, custom_url=None, use_playwright=False):
         'page_download_types': config.get('page_download_types', ['html']),
         'max_pages_per_domain': config.get('max_pages_per_domain', 100),
         'max_file_size_mb': config.get('max_file_size_mb', 50),
-        'max_retries': config.get('max_retries', 3),
+        'max_retries': config.get('max_retries', 5),
         'use_playwright': use_playwright
     }
     
@@ -225,7 +251,7 @@ def main():
     print(f"Allowed Domains: {', '.join(allowed_domains)}")
     print(f"Max Depth: {config.get('max_depth', 3)}")
     print(f"Max Pages per Domain: {config.get('max_pages_per_domain', 100)}")
-    print(f"Max Retries: {config.get('max_retries', 3)}")
+    print(f"Max Retries: {config.get('max_retries', 5)}")
     print(f"Page Download Types: {', '.join(config.get('page_download_types', ['html']))}")
     print(f"Output Directory: {config.get('storage', {}).get('output_dir', './downloads')}")
     print(f"Exclude Patterns: {len(config.get('exclude_patterns', []))} patterns")
@@ -235,11 +261,11 @@ def main():
     timeout_settings = config.get("timeout_settings", {})
     if timeout_settings:
         print(f"Timeout Settings:")
-        print(f"  Page Load: {timeout_settings.get('page_load_timeout', 30)}s")
-        print(f"  Network Idle: {timeout_settings.get('network_idle_timeout', 10)}s")
-        print(f"  JavaScript: {timeout_settings.get('javascript_timeout', 15)}s")
-        print(f"  Request: {timeout_settings.get('request_timeout', 60)}s")
-        print(f"  Retry Timeout: {timeout_settings.get('retry_timeout', 5)}s")
+        print(f"  Page Load: {timeout_settings.get('page_load_timeout', 60)}s")
+        print(f"  Network Idle: {timeout_settings.get('network_idle_timeout', 20)}s")
+        print(f"  JavaScript: {timeout_settings.get('javascript_timeout', 30)}s")
+        print(f"  Request: {timeout_settings.get('request_timeout', 120)}s")
+        print(f"  Retry Timeout: {timeout_settings.get('retry_timeout', 10)}s")
     
     # Print dynamic slowdown configuration
     dynamic_slowdown = config.get("dynamic_slowdown", {})
