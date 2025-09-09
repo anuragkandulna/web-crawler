@@ -18,6 +18,20 @@ class CrawlItem(scrapy.Item):
     domain = scrapy.Field()
     content_hash = scrapy.Field()  # Add content hash field
 
+    def __repr__(self):
+        """Redact large/binary fields like body from log output."""
+        safe = {}
+        for k, v in self.items():
+            if k == 'body' and v is not None:
+                try:
+                    size = len(v)
+                except Exception:
+                    size = '?'
+                safe[k] = f"<bytes: {size} bytes>"
+            else:
+                safe[k] = v
+        return f"CrawlItem({safe})"
+
 class SiteSpider(scrapy.Spider):
     name = "site"
     
