@@ -44,7 +44,10 @@ class SiteSpider(scrapy.Spider):
         self.load_config()
         
         # Override with provided parameters
-        self.allowed_domains = allowed_domains or self.config.get('allowed_domains', [])
+        merged_allowed = set(self.config.get('allowed_domains', []) or [])
+        if allowed_domains:
+            merged_allowed.update(allowed_domains)
+        self.allowed_domains = sorted(merged_allowed)
         self.start_urls = start_urls or [self.config.get('base_url', 'https://example.com')]
         self.exclude_patterns = exclude_patterns or self.config.get('exclude_patterns', [])
         self.download_file_types = download_file_types or self.config.get('download_file_types', [])
@@ -100,27 +103,15 @@ class SiteSpider(scrapy.Spider):
         return False
     
     def is_allowed_domain(self, url):
-        """Check if URL belongs to allowed domains - STRICT domain checking"""
+        """Check if URL belongs to allowed domains (merge-config aware)."""
         parsed_url = urlparse(url)
         domain = parsed_url.netloc.lower()
-        
-        # Get base domain from start URLs
-        base_domains = set()
-        for start_url in self.start_urls:
-            base_parsed = urlparse(start_url)
-            base_domain = base_parsed.netloc.lower()
-            base_domains.add(base_domain)
-            # Also add www variant
-            if base_domain.startswith('www.'):
-                base_domains.add(base_domain[4:])
-            else:
-                base_domains.add(f'www.{base_domain}')
-        
-        # Check if domain matches any base domain
-        for base_domain in base_domains:
-            if domain == base_domain or domain.endswith('.' + base_domain):
+        for allowed in self.allowed_domains:
+            a = allowed.lower()
+            if domain == a or domain.endswith('.' + a):
                 return True
-        
+            if a.startswith('www.') and domain == a[4:]:
+                return True
         return False
     
     def check_domain_limit(self, url):
