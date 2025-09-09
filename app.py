@@ -67,6 +67,16 @@ def update_scrapy_settings(config, use_playwright=False):
     settings.set('DOWNLOAD_DELAY', config.get('delay_between_requests', 0.5))
     settings.set('DEPTH_LIMIT', config.get('max_depth', 3))
     
+    # Timeout settings
+    timeout_settings = config.get('timeout_settings', {})
+    settings.set('DOWNLOAD_TIMEOUT', timeout_settings.get('request_timeout', 60))
+    settings.set('DOWNLOAD_WARNSIZE', 33554432)  # 32MB
+    settings.set('DOWNLOAD_MAXSIZE', 1073741824)  # 1GB
+    
+    # Retry settings
+    settings.set('RETRY_TIMES', config.get('max_retries', 3))
+    settings.set('RETRY_HTTP_CODES', [500, 502, 503, 504, 408, 429])
+    
     # File download settings
     output_dir = config.get('storage', {}).get('output_dir', './downloads')
     settings.set('FILES_STORE', output_dir)
@@ -80,7 +90,14 @@ def update_scrapy_settings(config, use_playwright=False):
         })
         settings.set('TWISTED_REACTOR', 'twisted.internet.asyncioreactor.AsyncioSelectorReactor')
         settings.set('PLAYWRIGHT_BROWSER_TYPE', 'chromium')
-        settings.set('PLAYWRIGHT_LAUNCH_OPTIONS', {'headless': True})
+        settings.set('PLAYWRIGHT_LAUNCH_OPTIONS', {
+            'headless': True,
+            'args': ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+        })
+        
+        # Playwright timeout settings
+        settings.set('PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT', timeout_settings.get('page_load_timeout', 30) * 1000)
+        settings.set('PLAYWRIGHT_PAGE_METHODS_TIMEOUT', timeout_settings.get('javascript_timeout', 15) * 1000)
         
     # Downloader middleware settings for dynamic slowdown and user agent rotation
     downloader_middlewares = {
@@ -111,27 +128,30 @@ def run_crawler(config, custom_url=None, use_playwright=False):
     # Update Scrapy settings
     settings = update_scrapy_settings(config, use_playwright)
     
-    # Determine allowed domains
-    allowed_domains = config.get('allowed_domains', []).copy()
+    # Determine allowed domains - STRICT domain checking
+    allowed_domains = []
     start_urls = []
     
     if custom_url:
         start_urls = [custom_url]
         # Extract domain from custom URL and add to allowed domains
         custom_domain = extract_domain_from_url(custom_url)
-        if custom_domain not in allowed_domains:
-            allowed_domains.append(custom_domain)
-            # Also add www variant
-            if not custom_domain.startswith('www.'):
-                allowed_domains.append(f'www.{custom_domain}')
-            else:
-                allowed_domains.append(custom_domain[4:])  # Remove www.
+        allowed_domains.append(custom_domain)
+        # Also add www variant
+        if not custom_domain.startswith('www.'):
+            allowed_domains.append(f'www.{custom_domain}')
+        else:
+            allowed_domains.append(custom_domain[4:])  # Remove www.
     else:
         start_urls = [config.get('base_url')]
         if config.get('base_url'):
             base_domain = extract_domain_from_url(config.get('base_url'))
-            if base_domain not in allowed_domains:
-                allowed_domains.append(base_domain)
+            allowed_domains.append(base_domain)
+            # Also add www variant
+            if not base_domain.startswith('www.'):
+                allowed_domains.append(f'www.{base_domain}')
+            else:
+                allowed_domains.append(base_domain[4:])  # Remove www.
     
     # Prepare spider arguments
     spider_args = {
@@ -139,8 +159,10 @@ def run_crawler(config, custom_url=None, use_playwright=False):
         'start_urls': start_urls,
         'exclude_patterns': config.get('exclude_patterns', []),
         'download_file_types': config.get('download_file_types', []),
+        'page_download_types': config.get('page_download_types', ['html']),
         'max_pages_per_domain': config.get('max_pages_per_domain', 100),
         'max_file_size_mb': config.get('max_file_size_mb', 50),
+        'max_retries': config.get('max_retries', 3),
         'use_playwright': use_playwright
     }
     
@@ -178,11 +200,22 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
     
     # Determine allowed domains for display
-    allowed_domains = config.get('allowed_domains', []).copy()
+    allowed_domains = []
     if args.url:
         custom_domain = extract_domain_from_url(args.url)
-        if custom_domain not in allowed_domains:
-            allowed_domains.append(custom_domain)
+        allowed_domains.append(custom_domain)
+        if not custom_domain.startswith('www.'):
+            allowed_domains.append(f'www.{custom_domain}')
+        else:
+            allowed_domains.append(custom_domain[4:])
+    else:
+        if config.get('base_url'):
+            base_domain = extract_domain_from_url(config.get('base_url'))
+            allowed_domains.append(base_domain)
+            if not base_domain.startswith('www.'):
+                allowed_domains.append(f'www.{base_domain}')
+            else:
+                allowed_domains.append(base_domain[4:])
     
     # Print configuration summary
     print("=" * 50)
@@ -192,9 +225,22 @@ def main():
     print(f"Allowed Domains: {', '.join(allowed_domains)}")
     print(f"Max Depth: {config.get('max_depth', 3)}")
     print(f"Max Pages per Domain: {config.get('max_pages_per_domain', 100)}")
+    print(f"Max Retries: {config.get('max_retries', 3)}")
+    print(f"Page Download Types: {', '.join(config.get('page_download_types', ['html']))}")
     print(f"Output Directory: {config.get('storage', {}).get('output_dir', './downloads')}")
     print(f"Exclude Patterns: {len(config.get('exclude_patterns', []))} patterns")
     print(f"Playwright Mode: {'Enabled' if args.playwright else 'Disabled'}")
+    
+    # Print timeout configuration
+    timeout_settings = config.get("timeout_settings", {})
+    if timeout_settings:
+        print(f"Timeout Settings:")
+        print(f"  Page Load: {timeout_settings.get('page_load_timeout', 30)}s")
+        print(f"  Network Idle: {timeout_settings.get('network_idle_timeout', 10)}s")
+        print(f"  JavaScript: {timeout_settings.get('javascript_timeout', 15)}s")
+        print(f"  Request: {timeout_settings.get('request_timeout', 60)}s")
+        print(f"  Retry Timeout: {timeout_settings.get('retry_timeout', 5)}s")
+    
     # Print dynamic slowdown configuration
     dynamic_slowdown = config.get("dynamic_slowdown", {})
     if dynamic_slowdown.get("enabled", False):
