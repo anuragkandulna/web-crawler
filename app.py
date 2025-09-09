@@ -66,11 +66,12 @@ def update_scrapy_settings(config):
     settings.set('FILES_STORE', output_dir)
     settings.set('IMAGES_STORE', output_dir)
     
-    # Pipeline settings
+    # Pipeline settings - Include PageDownloadPipeline
     settings.set('ITEM_PIPELINES', {
         'pipelines.ValidationPipeline': 100,
         'pipelines.ContentHashPipeline': 200,
-        'pipelines.FileDownloadPipeline': 300,
+        'pipelines.PageDownloadPipeline': 300,  # Download HTML pages
+        'pipelines.FileDownloadPipeline': 400,  # Download other files
     })
     
     return settings
