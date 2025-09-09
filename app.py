@@ -116,8 +116,7 @@ def update_scrapy_settings(config, use_playwright=False):
                 '--disable-features=VizDisplayCompositor',
                 '--disable-extensions',
                 '--disable-plugins',
-                '--disable-images',
-                '--disable-javascript'  # Disable JS for faster loading
+                '--disable-images'
             ]
         })
         
