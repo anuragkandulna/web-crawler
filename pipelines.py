@@ -112,13 +112,21 @@ class FileDownloadPipeline(FilesPipeline):
                 # Calculate file hash
                 file_hash = self.calculate_file_hash(result['path'])
                 
+                # Compute file size
+                try:
+                    full_path = os.path.join(self.store.basedir, file_path)
+                    size_bytes = os.path.getsize(full_path)
+                except Exception:
+                    size_bytes = 0
+                
                 # Add to manifest
                 self.manifest[item['url']] = {
                     'file_path': file_path,
                     'hash': file_hash,
+                    'checksum': result.get('checksum', ''),
                     'content_type': item.get('content_type', ''),
-                    'timestamp': result.get('checksum', ''),
-                    'size': result.get('size', 0)
+                    'timestamp': datetime.now().isoformat(),
+                    'size': size_bytes
                 }
         
         if file_paths:
