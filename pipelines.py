@@ -13,9 +13,16 @@ from datetime import datetime
 class FileDownloadPipeline(FilesPipeline):
     """Custom pipeline for downloading files with hash-based deduplication"""
     
-    def __init__(self, store_uri, download_func=None, settings=None):
+    @classmethod
+    def from_crawler(cls, crawler):
+        """Create pipeline instance from crawler"""
+        store_uri = crawler.settings.get("FILES_STORE")
+        return cls(store_uri, crawler=crawler)
+    
+    def __init__(self, store_uri, download_func=None, settings=None, crawler=None):
         super().__init__(store_uri, download_func, settings)
         self.manifest = {}
+        self.crawler = crawler
         self.load_config()
         self.setup_logging()
         
