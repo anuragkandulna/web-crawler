@@ -21,7 +21,8 @@ class SiteSpider(scrapy.Spider):
     name = "site"
     
     def __init__(self, allowed_domains=None, start_urls=None, exclude_patterns=None, 
-                 download_file_types=None, max_pages_per_domain=None, max_file_size_mb=None, *args, **kwargs):
+                 download_file_types=None, max_pages_per_domain=None, max_file_size_mb=None, 
+                 use_playwright=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
         # Load configuration
@@ -34,6 +35,7 @@ class SiteSpider(scrapy.Spider):
         self.download_file_types = download_file_types or self.config.get('download_file_types', [])
         self.max_pages_per_domain = max_pages_per_domain or self.config.get('max_pages_per_domain', 100)
         self.max_file_size_mb = max_file_size_mb or self.config.get('max_file_size_mb', 50)
+        self.use_playwright = use_playwright
         
         # Track pages per domain
         self.pages_per_domain = {}
@@ -41,6 +43,7 @@ class SiteSpider(scrapy.Spider):
         self.logger.info(f"Spider initialized with {len(self.start_urls)} start URLs")
         self.logger.info(f"Allowed domains: {self.allowed_domains}")
         self.logger.info(f"Exclude patterns: {len(self.exclude_patterns)} patterns")
+        self.logger.info(f"Playwright mode: {self.use_playwright}")
     
     def load_config(self):
         """Load configuration from YAML file"""
@@ -85,6 +88,25 @@ class SiteSpider(scrapy.Spider):
         parsed_url = urlparse(url)
         domain = parsed_url.netloc.lower()
         self.pages_per_domain[domain] = self.pages_per_domain.get(domain, 0) + 1
+    
+    def start_requests(self):
+        """Generate initial requests with optional Playwright support"""
+        for url in self.start_urls:
+            if self.use_playwright:
+                yield scrapy.Request(
+                    url=url,
+                    callback=self.parse,
+                    meta={
+                        "playwright": True,
+                        "playwright_include_page": True,
+                        "playwright_page_methods": [
+                            {"method": "wait_for_load_state", "args": ["networkidle"]},
+                            {"method": "wait_for_timeout", "args": [3000]},  # Wait 3 seconds for JS
+                        ]
+                    }
+                )
+            else:
+                yield scrapy.Request(url=url, callback=self.parse)
     
     def parse(self, response):
         """Parse response and extract links and content"""
@@ -139,7 +161,21 @@ class SiteSpider(scrapy.Spider):
                         continue
                     
                     # Follow the link
-                    yield response.follow(u, callback=self.parse)
+                    if self.use_playwright:
+                        yield response.follow(
+                            u, 
+                            callback=self.parse,
+                            meta={
+                                "playwright": True,
+                                "playwright_include_page": True,
+                                "playwright_page_methods": [
+                                    {"method": "wait_for_load_state", "args": ["networkidle"]},
+                                    {"method": "wait_for_timeout", "args": [2000]},
+                                ]
+                            }
+                        )
+                    else:
+                        yield response.follow(u, callback=self.parse)
             
             # Extract image URLs
             image_urls = []
@@ -166,7 +202,7 @@ class SiteSpider(scrapy.Spider):
                 if link:
                     file_url = urljoin(response.url, link)
                     if not self.should_exclude_url(file_url) and self.is_allowed_domain(file_url):
-                        # Check if it's a downloadable file
+                        # Check for common file extensions
                         parsed_url = urlparse(file_url)
                         path = parsed_url.path.lower()
                         
