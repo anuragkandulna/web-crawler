@@ -170,7 +170,6 @@ class SiteSpider(scrapy.Spider):
                     callback=self.parse,
                     meta={
                         "playwright": True,
-                        "playwright_include_page": True,
                         "playwright_page_methods": [
                             {"method": "wait_for_load_state", "args": ["networkidle"], "timeout": self.network_idle_timeout * 1000},
                             {"method": "wait_for_timeout", "args": [self.javascript_timeout * 1000]},
@@ -216,7 +215,6 @@ class SiteSpider(scrapy.Spider):
                     callback=failure.request.callback,
                     meta={
                         "playwright": True,
-                        "playwright_include_page": True,
                         "playwright_page_methods": [
                             {"method": "wait_for_load_state", "args": ["networkidle"], "timeout": self.network_idle_timeout * 1000},
                             {"method": "wait_for_timeout", "args": [self.javascript_timeout * 1000]},
@@ -320,7 +318,6 @@ class SiteSpider(scrapy.Spider):
                             callback=self.parse,
                             meta={
                                 "playwright": True,
-                                "playwright_include_page": True,
                                 "playwright_page_methods": [
                                     {"method": "wait_for_load_state", "args": ["networkidle"], "timeout": self.network_idle_timeout * 1000},
                                     {"method": "wait_for_timeout", "args": [self.javascript_timeout * 1000]},
