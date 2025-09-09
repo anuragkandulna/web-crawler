@@ -77,9 +77,9 @@ class FileDownloadPipeline(FilesPipeline):
         url = request.url
         parsed_url = urlparse(url)
         
-        # Create directory structure based on domain and path
-        domain = parsed_url.netloc.replace('www.', '')
-        path = parsed_url.path.strip('/')
+        domain = parsed_url.netloc.replace("www.", "")
+        path = parsed_url.path.strip("/")
+        domain_folder = domain
         
         if not path:
             path = 'index'
@@ -97,8 +97,8 @@ class FileDownloadPipeline(FilesPipeline):
             elif 'image' in content_type:
                 ext = '.jpg'  # default image extension
         
-        filename = f"{domain}_{path}{ext}"
-        return f"{domain}/{filename}"
+        filename = f"{path}{ext}" if path != "index" else f"index{ext}"
+        return f"{domain_folder}/{filename}"
     
     def item_completed(self, results, item, info):
         """Called when item processing is completed"""
@@ -249,17 +249,15 @@ class PageDownloadPipeline:
         try:
             # Parse URL to get domain and path
             parsed_url = urlparse(item['url'])
-            domain = parsed_url.netloc.replace('www.', '').replace('.', 'dot')
-            path = parsed_url.path.strip('/')
-            
-            # Create domain folder name (e.g., thesceptreaidotcom)
-            domain_folder = f"{domain}dotcom" if not domain.endswith('dotcom') else domain
+            domain = parsed_url.netloc.replace('www.', '')
+            # Keep domain as-is for folder name (e.g., theciso.org, example.com)
+            domain_folder = domain
             
             # Create output directory structure
             output_dir = self.config['storage']['output_dir']
             domain_path = os.path.join(output_dir, domain_folder)
             os.makedirs(domain_path, exist_ok=True)
-            
+            path = parsed_url.path.strip("/")
             # Create directory hierarchy based on URL path
             if path:
                 # Split path into components
